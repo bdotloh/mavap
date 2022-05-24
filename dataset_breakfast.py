@@ -66,13 +66,23 @@ if __name__ == '__main__':
                         help='train or test')
     parser.add_argument('-bs', '--batch-size', type=int, default=2,
                         help='batch size')
+    parser.add_argument('-act', '--act-dim', type=int, default=48,
+                        help='act dimension')
+    parser.add_argument('-hid', '--h-dim', type=int, default=64,
+                        help='hidden dimension')
+    parser.add_argument('-z', '--z-dim', type=int, default=16,
+                        help='z dimension')
+    parser.add_argument('-l', '--n-layers', type=int, default=1,
+                        help='number of dimension')
+    parser.add_argument('-head', '--n-heads', type=int, default=4,
+                        help='number of heads')
 
     args = parser.parse_args()
     dataset = BreakfastseqDataset(args.dir, args.split, args.split_type)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, collate_fn=seq_collate_dict)
     example_batch, mask, length = next(iter(dataloader))
     print(example_batch['act_seqs_one_hot'].shape)
-    model = VRNN(act_dim=48, h_dim=16, z_dim=16, n_layers=1)
+    model = VRNN(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers)
     priors, posteriors, pred_acts, pred_durs = model(example_batch['act_seqs_one_hot'], example_batch['dur_seqs'])
     cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
     nll_gauss = torch.nn.GaussianNLLLoss(reduction='none')
@@ -81,6 +91,7 @@ if __name__ == '__main__':
     nll_gauss_loss = 0
     T = example_batch['act_seqs_ix'].size(1)
     for t in range(T):
+        print(kl_loss)
         kl_loss += kld_gauss(
             posteriors[0][:, t, :],
             posteriors[-1][:, t, :],

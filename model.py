@@ -244,14 +244,13 @@ class AnticipationModel(nn.Module):
 
 
 class VRNN(nn.Module):
-    def __init__(self, act_dim, h_dim, z_dim, n_layers, n_heads=1, bias=False, batch_first=True):
+    def __init__(self, act_dim, h_dim, z_dim, n_layers, bias=False, batch_first=True):
         super().__init__()
         self.batch_first = batch_first
         self.act_dim = act_dim
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.n_layers = n_layers
-        self.n_heads = n_heads
 
         # feature-extracting transformations
         self.phi_act = nn.Sequential(
@@ -272,24 +271,21 @@ class VRNN(nn.Module):
         self.enc = nn.Sequential(
             nn.Linear(h_dim + h_dim, h_dim),
             nn.ReLU(),
-            nn.Linear(h_dim, z_dim)
-        )
-
-        # self.enc_mean = nn.Linear(h_dim, z_dim)
-        # self.enc_std = nn.Sequential(
-        #     nn.Linear(h_dim, z_dim),
-        #     nn.Softplus())
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU())
+        self.enc_mean = nn.Linear(h_dim, z_dim)
+        self.enc_std = nn.Sequential(
+            nn.Linear(h_dim, z_dim),
+            nn.Softplus())
 
         # prior
         self.prior = nn.Sequential(
             nn.Linear(h_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, z_dim)
-        )
-        # self.prior_mean = nn.Linear(h_dim, z_dim)
-        # self.prior_std = nn.Sequential(
-        #     nn.Linear(h_dim, z_dim),
-        #     nn.Softplus())
+            nn.ReLU())
+        self.prior_mean = nn.Linear(h_dim, z_dim)
+        self.prior_std = nn.Sequential(
+            nn.Linear(h_dim, z_dim),
+            nn.Softplus())
 
         # decoder
         self.dec = nn.Sequential(
@@ -308,12 +304,6 @@ class VRNN(nn.Module):
 
         # recurrence
         self.rnn = nn.GRU(h_dim + h_dim, h_dim, n_layers, bias)
-
-        self.relu = nn.ReLU()
-        self.softplus = nn.Softplus()
-
-        self.gamma_post = nn.Parameter(torch.ones(1, n_heads))
-        self.gamma_prior = nn.Parameter(torch.ones(1, n_heads))
 
     def forward(self, act_seq, dur_seq):
         if self.batch_first:
@@ -334,32 +324,15 @@ class VRNN(nn.Module):
                 phi_x_t = self.phi_x(torch.cat([phi_act_t, dur_seq[:, t, :]], -1))
             else:
                 phi_x_t = self.phi_act(act_seq[t])
+            # encoder
+            enc_t = self.enc(torch.cat([phi_x_t, h[-1]], -1))
+            enc_mean_t = self.enc_mean(enc_t)
+            enc_std_t = self.enc_std(enc_t)
 
-            # encoder heads
-            enc_heads = {
-                'means': torch.zeros(batch_size, self.n_heads, self.z_dim, device=device),
-                'stds': torch.zeros(batch_size, self.n_heads, self.z_dim, device=device)
-                         }
-
-            for i in range(self.n_heads):
-                enc_heads['means'][:, i, :] = self.enc(torch.cat([phi_x_t, h[-1]], -1))
-                enc_heads['stds'][:, i, :] = self.enc(torch.cat([phi_x_t, h[-1]], -1))
-
-            enc_mean_t = self.relu(torch.matmul(self.gamma_post, enc_heads['means'])).squeeze(1)
-            enc_std_t = self.softplus(torch.matmul(self.gamma_post, enc_heads['stds'])).squeeze(1)
-
-            # prior heads
-            prior_heads = {
-                'means': torch.zeros(batch_size, self.n_heads, self.z_dim, device=device),
-                'stds': torch.zeros(batch_size, self.n_heads, self.z_dim, device=device)
-            }
-
-            for i in range(self.n_heads):
-                prior_heads['means'][:, i, :] = self.enc(torch.cat([phi_x_t, h[-1]], -1)).squeeze(1)
-                prior_heads['stds'][:, i, :] = self.enc(torch.cat([phi_x_t, h[-1]], -1)).squeeze(1)
-
-            prior_mean_t = self.relu(torch.matmul(self.gamma_post, prior_heads['means']))
-            prior_std_t = self.softplus(torch.matmul(self.gamma_post, prior_heads['stds']))
+            # prior
+            prior_t = self.prior(h[-1])
+            prior_mean_t = self.prior_mean(prior_t)
+            prior_std_t = self.prior_std(prior_t)
 
             # sampling and reparameterization
             z_t = self._reparameterized_sample(enc_mean_t, enc_std_t)
