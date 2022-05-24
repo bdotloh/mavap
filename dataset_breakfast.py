@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.functional import one_hot
 
-from model import VRNN
+from model import MultiHeadVRNN
 
 
 class BreakfastseqDataset(Dataset):
@@ -82,7 +82,7 @@ if __name__ == '__main__':
     dataloader = DataLoader(dataset, batch_size=args.batch_size, collate_fn=seq_collate_dict)
     example_batch, mask, length = next(iter(dataloader))
     print(example_batch['act_seqs_one_hot'].shape)
-    model = VRNN(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers)
+    model = MultiHeadVRNN(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)
     priors, posteriors, pred_acts, pred_durs = model(example_batch['act_seqs_one_hot'], example_batch['dur_seqs'])
     cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
     nll_gauss = torch.nn.GaussianNLLLoss(reduction='none')
@@ -91,7 +91,6 @@ if __name__ == '__main__':
     nll_gauss_loss = 0
     T = example_batch['act_seqs_ix'].size(1)
     for t in range(T):
-        print(kl_loss)
         kl_loss += kld_gauss(
             posteriors[0][:, t, :],
             posteriors[-1][:, t, :],

@@ -243,20 +243,20 @@ class AnticipationModel(nn.Module):
         return torch.zeros(batch_size, self.h_dim)
 
 
-class VRNN(nn.Module):
-    def __init__(self, act_dim, h_dim, z_dim, n_layers, bias=False, batch_first=True):
+class MultiHeadVRNN(nn.Module):
+    def __init__(self, act_dim, h_dim, z_dim, n_layers, n_heads, bias=False, batch_first=True):
         super().__init__()
         self.batch_first = batch_first
         self.act_dim = act_dim
         self.h_dim = h_dim
         self.z_dim = z_dim
         self.n_layers = n_layers
+        self.n_heads = n_heads
 
         # feature-extracting transformations
         self.phi_act = nn.Sequential(
             nn.Linear(act_dim, h_dim),
-            nn.ReLU(),
-            nn.Linear(h_dim, h_dim))
+            nn.ReLU())
 
         self.phi_x = nn.Sequential(
             nn.Linear(h_dim + 1, h_dim),
@@ -266,6 +266,30 @@ class VRNN(nn.Module):
         self.phi_z = nn.Sequential(
             nn.Linear(z_dim, h_dim),
             nn.ReLU())
+
+        # create list of posterior and prior networks
+        self.post_networks = []
+        self.prior_networks = []
+
+        for i in range(n_heads):
+            post_network = nn.Sequential(
+                nn.Linear(h_dim + h_dim, h_dim),
+                nn.ReLU(),
+                nn.Linear(h_dim, z_dim)
+            )
+
+            prior_network = nn.Sequential(
+                nn.Linear(h_dim, h_dim),
+                nn.ReLU(),
+                nn.Linear(h_dim, z_dim)
+            )
+
+            self.post_networks.append(post_network)
+            self.prior_networks.append(prior_network)
+
+        # weights on post and priors
+        self.gamma_post = nn.Parameter(torch.ones(n_heads))
+        self.gamma_prior = nn.Parameter(torch.ones(n_heads))
 
         # encoder
         self.enc = nn.Sequential(
@@ -305,6 +329,9 @@ class VRNN(nn.Module):
         # recurrence
         self.rnn = nn.GRU(h_dim + h_dim, h_dim, n_layers, bias)
 
+        self.relu = nn.ReLU()
+        self.softplus = nn.Softplus()
+
     def forward(self, act_seq, dur_seq):
         if self.batch_first:
             batch_size = act_seq.size(0)
@@ -313,7 +340,7 @@ class VRNN(nn.Module):
             batch_size = act_seq.size(1)
             T = act_seq.size(0)
 
-        all_enc_mean, all_enc_std = [], []
+        all_post_mean, all_post_std = [], []
         all_prior_mean, all_prior_std = [], []
         all_dec_act, all_dec_dur_mean, all_dec_dur_std = [], [], []
 
@@ -324,18 +351,38 @@ class VRNN(nn.Module):
                 phi_x_t = self.phi_x(torch.cat([phi_act_t, dur_seq[:, t, :]], -1))
             else:
                 phi_x_t = self.phi_act(act_seq[t])
-            # encoder
-            enc_t = self.enc(torch.cat([phi_x_t, h[-1]], -1))
-            enc_mean_t = self.enc_mean(enc_t)
-            enc_std_t = self.enc_std(enc_t)
 
-            # prior
-            prior_t = self.prior(h[-1])
-            prior_mean_t = self.prior_mean(prior_t)
-            prior_std_t = self.prior_std(prior_t)
+            # encoder
+            posts = {'means': torch.zeros(batch_size, self.n_heads, self.z_dim),
+                     'stds': torch.zeros(batch_size, self.n_heads, self.z_dim)}
+
+            priors = {'means': torch.zeros(batch_size, self.n_heads, self.z_dim),
+                      'stds': torch.zeros(batch_size, self.n_heads, self.z_dim)}
+
+            for head_i in range(self.n_heads):
+                posts['means'][:, head_i, :] = self.post_networks[head_i](torch.cat([phi_x_t, h[-1]], -1))
+                posts['stds'][:, head_i, :] = self.post_networks[head_i](torch.cat([phi_x_t, h[-1]], -1))
+
+                priors['means'][:, head_i, :] = self.prior_networks[head_i](h[-1])
+                priors['stds'][:, head_i, :] = self.prior_networks[head_i](h[-1])
+
+            post_mean_t = self.relu(torch.matmul(self.gamma_prior, posts['means']))
+            post_sigma_t = self.softplus(torch.matmul(self.gamma_prior, posts['stds']))
+
+            prior_mean_t = self.relu(torch.matmul(self.gamma_prior, priors['means']))
+            prior_std_t = self.softplus(torch.matmul(self.gamma_prior, priors['stds']))
+
+            # enc_t = self.enc(torch.cat([phi_x_t, h[-1]], -1))
+            # enc_mean_t = self.enc_mean(enc_t)
+            # enc_std_t = self.enc_std(enc_t)
+            #
+            # # prior
+            # prior_t = self.prior(h[-1])
+            # prior_mean_t = self.prior_mean(prior_t)
+            # prior_std_t = self.prior_std(prior_t)
 
             # sampling and reparameterization
-            z_t = self._reparameterized_sample(enc_mean_t, enc_std_t)
+            z_t = self._reparameterized_sample(post_mean_t, post_sigma_t)
             phi_z_t = self.phi_z(z_t)
 
             # decoder
@@ -348,26 +395,26 @@ class VRNN(nn.Module):
             # recurrence
             _, h = self.rnn(torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), h)
 
-            all_enc_mean.append(enc_mean_t)
-            all_enc_std.append(enc_std_t)
+            all_post_mean.append(post_mean_t)
+            all_post_std.append(post_sigma_t)
             all_prior_mean.append(prior_mean_t)
             all_prior_std.append(prior_std_t)
             all_dec_act.append(dec_act_t)
             all_dec_dur_mean.append(dec_dur_mean_t)
             all_dec_dur_std.append(dec_dur_std_t)
 
-        priors_mean = torch.stack(all_prior_mean, dim=1)
-        priors_std = torch.stack(all_prior_std, dim=1)
+        prior_means = torch.stack(all_prior_mean, dim=1)
+        prior_stds = torch.stack(all_prior_std, dim=1)
 
-        posteriors_mean = torch.stack(all_enc_mean, dim=1)
-        posteriors_std = torch.stack(all_enc_std, dim=1)
+        posterior_means = torch.stack(all_post_mean, dim=1)
+        posterior_stds = torch.stack(all_post_std, dim=1)
 
         reconstructed_acts = torch.stack(all_dec_act, dim=1)
         reconstructed_durs_mean = torch.stack(all_dec_dur_mean, dim=1)
         reconstructed_durs_std = torch.stack(all_dec_dur_std, dim=1)
 
-        return (priors_mean, priors_std), \
-               (posteriors_mean, posteriors_std), \
+        return (prior_means, prior_stds), \
+               (posterior_means, posterior_stds), \
                reconstructed_acts, \
                (reconstructed_durs_mean, reconstructed_durs_std)
 
@@ -430,5 +477,3 @@ class VRNN(nn.Module):
         # cross entropy loss
         cross_entropy_loss = nn.CrossEntropyLoss()
         return cross_entropy_loss(theta, x)
-
-
