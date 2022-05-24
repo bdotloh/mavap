@@ -477,3 +477,12 @@ class MultiHeadVRNN(nn.Module):
         # cross entropy loss
         cross_entropy_loss = nn.CrossEntropyLoss()
         return cross_entropy_loss(theta, x)
+
+
+class MAVAP(nn.Module):
+    def __init__(self, act_dim, h_dim, z_dim, n_layers, n_heads):
+        self.vrnn = MultiHeadVRNN(act_dim, h_dim, z_dim, n_layers, n_heads, bias=False, batch_first=True)
+
+    def forward(self, obs_act_seq, obs_dur_seq):
+        priors, posteriors, reco_obs_act_seq, reco_obs_dur_seq = self.vrnn(obs_act_seq, obs_dur_seq)
+
