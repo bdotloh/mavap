@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.functional import one_hot
 
-from model import MultiHeadVRNN
+from model import MultiHeadVRNN, AnticipationModel
 
 
 class BreakfastseqDataset(Dataset):
@@ -23,8 +23,12 @@ class BreakfastseqDataset(Dataset):
                     action_seq, duration_seq = get_label_length_seq(content)
                     action_ix_seq = [self.act_dict[ix] for ix in action_seq]
                     self.data['act_seqs_ix'].append(torch.tensor(action_ix_seq, dtype=torch.long).unsqueeze(-1))
-                    self.data['dur_seqs'].append(torch.tensor(duration_seq).unsqueeze(-1))
+                    self.data['dur_seqs'].append(torch.tensor(duration_seq, dtype=torch.float32).unsqueeze(-1))
                     self.data['seq_lens'].append(len(action_seq))
+
+        self.all_durs = torch.cat(self.data['dur_seqs'], 0).view(-1)
+        self.dur_std, self.dur_mean = torch.std_mean(self.all_durs)
+
 
     def __len__(self):
         return len(self.data['act_seqs_ix'])
@@ -34,6 +38,8 @@ class BreakfastseqDataset(Dataset):
 
     def decode_act_ix_sequence(self, action_ix_sequence):
         return [list(self.act_dict.keys())[list(self.act_dict.values()).index(act_ix)] for act_ix in action_ix_sequence]
+
+
 
 
 def seq_collate_dict(data, time_first=False):
@@ -76,12 +82,19 @@ if __name__ == '__main__':
                         help='number of heads')
 
     args = parser.parse_args()
+
+    model = AnticipationModel(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_heads=args.n_heads)
+    ########### test data and evaluation #############
     dataset = BreakfastseqDataset(args.dir, args.split, args.split_type)
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=seq_collate_dict)
     act_seq, dur_seq = next(iter(dataloader))[0]['act_seqs_ix'], next(iter(dataloader))[0]['dur_seqs']
-    model_inputs, ground_truth = split_sequence(act_seq, dur_seq)
-    print(model_inputs)
+    (obs_acts, obs_durs), (groundtruth_future_acts, groundtruth_future_durs) = split_sequence(act_seq, dur_seq)
 
+    # process model inputs
+    obs_acts_one_hot = one_hot(obs_acts, num_classes=args.act_dim)
+    obs_durs_norm = obs_durs.apply_(lambda x: (x - dataset.dur_mean)/dataset.dur_std).unsqueeze(-1) # normalise duration
+    total_dur_to_predict = sum(groundtruth_future_durs)
+    pred_acts, pred_durs = model.generate(obs_acts_one_hot, obs_durs_norm, total_dur_to_predict, dataset.dur_mean, dataset.dur_std)
     # example_batch, mask, length = next(iter(dataloader))
     # # print(example_batch['act_seqs_one_hot'].shape)
     # model = MultiHeadVRNN(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)

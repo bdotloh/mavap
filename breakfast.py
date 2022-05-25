@@ -32,7 +32,7 @@ def breakfast_train(h_dim, z_dim, n_z, split, epochs, checkpoint_path=None):
     print(f'Split: {split} \n train instances: {len(trainset)}')
     trainloader = DataLoader(trainset, batch_size=1, collate_fn=pad_collate, shuffle=True)
 
-    model = AnticipationModel(act_dim=48, h_dim=h_dim, z_dim=z_dim, n_z=n_z)
+    model = AnticipationModel(act_dim=48, h_dim=h_dim, z_dim=z_dim, n_heads=n_z)
     optimizer = Adam(model.parameters(), lr=.00001)
 
     epoch_start = 1
@@ -143,7 +143,7 @@ def breakfast_eval(h_dim, z_dim, n_z, split, checkpoint_path=None):
     valloader = DataLoader(valset, batch_size=1, shuffle=False)
     print(f'Split: {split} val instances: {len(valset)}')
 
-    model = AnticipationModel(act_dim=48, h_dim=h_dim, z_dim=z_dim, n_z=n_z)
+    model = AnticipationModel(act_dim=48, h_dim=h_dim, z_dim=z_dim, n_heads=n_z)
     if checkpoint_path:
         checkpoint = torch.load(checkpoint_path)
         model.load_state_dict(checkpoint['model_state_dict'])

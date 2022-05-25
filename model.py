@@ -11,13 +11,14 @@ EPS = torch.finfo(torch.float).eps  # numerical logs
 
 
 class AnticipationModel(nn.Module):
-    def __init__(self, act_dim=20, h_dim=64, z_dim=64, n_z=5):
+    def __init__(self, act_dim=20, h_dim=64, z_dim=64, n_layers=1, n_heads=5):
         super().__init__()
 
         self.act_dim = act_dim
         self.h_dim = h_dim
         self.z_dim = z_dim
-        self.n_z = n_z
+        self.n_layers = n_layers
+        self.n_heads = n_heads
 
         self.act_emb = nn.Sequential(
             nn.Linear(act_dim, h_dim),
@@ -43,7 +44,7 @@ class AnticipationModel(nn.Module):
         self.post_networks = []
         self.prior_networks = []
 
-        for i in range(n_z):
+        for i in range(n_heads):
             post_network = nn.Sequential(
                 nn.Linear(h_dim + h_dim, h_dim),
                 nn.ReLU(),
@@ -51,7 +52,7 @@ class AnticipationModel(nn.Module):
             )
 
             prior_network = nn.Sequential(
-                nn.Linear(h_dim, z_dim),
+                nn.Linear(h_dim, h_dim),
                 nn.ReLU(),
                 nn.Linear(h_dim, z_dim)
             )
@@ -63,15 +64,15 @@ class AnticipationModel(nn.Module):
         self.dec_to_act = nn.Linear(h_dim, act_dim)
         self.dur_decoder = nn.Linear(h_dim + h_dim, 1)
 
-        self.rnn = nn.GRUCell(h_dim + h_dim, h_dim)
+        self.rnn = self.rnn = nn.GRU(h_dim + h_dim, h_dim, n_layers)
 
         self.relu = nn.ReLU()
         self.softplus = nn.Softplus()
         self.softmax = nn.Softmax(dim=-1)
         self.sigmoid = nn.Sigmoid()
 
-        self.gamma_post = nn.Parameter(torch.ones(1, n_z))
-        self.gamma_prior = nn.Parameter(torch.ones(1, n_z))
+        self.gamma_post = nn.Parameter(torch.ones(n_heads))
+        self.gamma_prior = nn.Parameter(torch.ones(n_heads))
 
     def forward(self, acts, durs):
         if isinstance(durs, list):
@@ -91,10 +92,10 @@ class AnticipationModel(nn.Module):
             phi_dur_t = self.dur_emb(durs[:, t].unsqueeze(-1))
             phi_x_t = self.x_emb(torch.cat([phi_act_t, phi_dur_t], -1))
 
-            post_mus = torch.zeros(batch_size, self.n_z, self.z_dim)
-            post_sigmas = torch.zeros(batch_size, self.n_z, self.z_dim)
+            post_mus = torch.zeros(batch_size, self.n_heads, self.z_dim)
+            post_sigmas = torch.zeros(batch_size, self.n_heads, self.z_dim)
 
-            for i in range(self.n_z):
+            for i in range(self.n_heads):
                 post_mus[:, i, :] = self.post_networks[i](torch.cat([phi_x_t, hidden], -1))
                 post_sigmas[:, i, :] = self.post_networks[i](torch.cat([phi_x_t, hidden], -1))
 
@@ -103,10 +104,10 @@ class AnticipationModel(nn.Module):
 
             mvn_post_t = Independent(Normal(post_mu_t, post_sigma_t), 1)
 
-            prior_mus = torch.zeros(batch_size, self.n_z, self.z_dim)
-            prior_sigmas = torch.zeros(batch_size, self.n_z, self.z_dim)
+            prior_mus = torch.zeros(batch_size, self.n_heads, self.z_dim)
+            prior_sigmas = torch.zeros(batch_size, self.n_heads, self.z_dim)
 
-            for i in range(self.n_z):
+            for i in range(self.n_heads):
                 prior_mus[:, i, :] = self.prior_networks[i](hidden)
                 prior_sigmas[:, i, :] = self.prior_networks[i](hidden)
 
@@ -122,10 +123,10 @@ class AnticipationModel(nn.Module):
 
             hidden = self.rnn(torch.cat([phi_x_t, self.z_emb(z_t)], -1), hidden)
 
-        prior_mus = torch.zeros(batch_size, self.n_z, self.z_dim)
-        prior_sigmas = torch.zeros(batch_size, self.n_z, self.z_dim)
+        prior_mus = torch.zeros(batch_size, self.n_heads, self.z_dim)
+        prior_sigmas = torch.zeros(batch_size, self.n_heads, self.z_dim)
 
-        for i in range(self.n_z):
+        for i in range(self.n_heads):
             prior_mus[:, i, :] = self.prior_networks[i](hidden)
             prior_sigmas[:, i, :] = self.prior_networks[i](hidden)
 
@@ -147,100 +148,93 @@ class AnticipationModel(nn.Module):
         return unnorm_prob_pred_act, (pred_dur_mean, pred_dur_std), torch.mean(kld)
 
     def generate(self, acts, durs, total_dur='dur', mean='mean_dur', std='std_dur'):
-        if isinstance(durs, list):
-            durs = torch.tensor(durs).type(torch.float)
-        if isinstance(acts, list):
-            acts = torch.tensor(acts, dtype=torch.long)
-
         last_obs_dur = durs[-1].item()
-        batch_size = acts.size(0)
-        pred_acts = [acts[:, -1].item()]
+
+        pred_acts = [torch.argmax(acts[:, -1, :]).item()]
         pred_durations = []
         pred_duration_so_far = 0
-        with torch.no_grad():
-            durs = torch.tensor([(dur - mean) / std for dur in durs]).unsqueeze(0)
 
-            hidden = self.init_hidden(acts.size(0))
-            T = acts.size(-1)
-            act_one_hot = F.one_hot(acts, num_classes=self.act_dim)
+        hidden = torch.zeros(self.n_layers, 1, self.h_dim, device=device)
+        T = acts.size(1)
 
-            for t in range(T):
-                phi_act_t = self.act_emb(act_one_hot[:, t, :].float())
-                phi_dur_t = self.dur_emb(durs[:, t].float()).unsqueeze(0)
-                phi_x_t = self.x_emb(torch.cat([phi_act_t, phi_dur_t], -1))
+        for t in range(T):
+            phi_act_t = self.act_emb(acts[:, t, :].float())
+            phi_dur_t = self.dur_emb(durs[t].float()).unsqueeze(0)
 
-                post_mus = torch.zeros(batch_size, self.n_z, self.z_dim)
-                post_sigmas = torch.zeros(batch_size, self.n_z, self.z_dim)
+            phi_x_t = self.x_emb(torch.cat([phi_act_t, phi_dur_t], -1))
 
-                for i in range(self.n_z):
-                    post_mus[:, i, :] = self.post_networks[i](torch.cat([phi_x_t, hidden], -1))
-                    post_sigmas[:, i, :] = self.post_networks[i](torch.cat([phi_x_t, hidden], -1))
+            post_mus = torch.zeros(1, self.n_heads, self.z_dim)
+            post_sigmas = torch.zeros(1, self.n_heads, self.z_dim)
 
-                post_mu_t = self.relu(torch.matmul(self.gamma_post, post_mus))
-                post_sigma_t = self.softplus(torch.matmul(self.gamma_post, post_sigmas))
+            for i in range(self.n_heads):
+                post_mus[:, i, :] = self.post_networks[i](torch.cat([phi_x_t, hidden[-1]], -1))
+                post_sigmas[:, i, :] = self.post_networks[i](torch.cat([phi_x_t, hidden[-1]], -1))
 
-                mvn_post_t = Independent(Normal(post_mu_t, post_sigma_t), 1)
-                z_t = torch.mean(mvn_post_t.rsample((1000,)), 0).squeeze(1)
-                phi_z_t = self.z_emb(z_t)
+            post_mu_t = self.relu(torch.matmul(self.gamma_post, post_mus))
+            post_sigma_t = self.softplus(torch.matmul(self.gamma_post, post_sigmas))
 
-                hidden = self.rnn(torch.cat([phi_x_t, phi_z_t], -1), hidden)
+            z_t = self._reparameterized_sample(post_mu_t, post_sigma_t)
+            phi_z_t = self.z_emb(z_t)
 
-            num_pred = 0
+            _, hidden = self.rnn(torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), hidden)
 
-            while True:
-                prior_mus = torch.zeros(batch_size, self.n_z, self.z_dim)
-                prior_sigmas = torch.zeros(batch_size, self.n_z, self.z_dim)
+        num_pred = 0
 
-                for i in range(self.n_z):
-                    prior_mus[:, i, :] = self.prior_networks[i](hidden)
-                    prior_sigmas[:, i, :] = self.prior_networks[i](hidden)
+        while True:
+            prior_mus = torch.zeros(1, self.n_heads, self.z_dim)
+            prior_sigmas = torch.zeros(1, self.n_heads, self.z_dim)
 
-                prior_mean_t = self.relu(torch.matmul(self.gamma_prior, prior_mus))
-                prior_sigma_t = self.softplus(torch.matmul(self.gamma_prior, prior_sigmas))
+            for i in range(self.n_heads):
+                prior_mus[:, i, :] = self.prior_networks[i](hidden[-1])
+                prior_sigmas[:, i, :] = self.prior_networks[i](hidden[-1])
 
-                mvn_prior_t = Independent(Normal(prior_mean_t, prior_sigma_t), 1)
-                z_t = torch.mean(mvn_prior_t.rsample((1000,)), 0).squeeze(1)
-                phi_z_t = self.z_emb(z_t)
+            prior_mean_t = self.relu(torch.matmul(self.gamma_prior, prior_mus))
+            prior_sigma_t = self.softplus(torch.matmul(self.gamma_prior, prior_sigmas))
 
-                dec_t = self.relu(self.phi_z_hidden_to_dec(torch.cat([phi_z_t, hidden], -1)))
-                pred_act_prob = self.dec_to_act(dec_t)
-                pred_act = torch.argmax(self.softmax(pred_act_prob))
+            z_t = self._reparameterized_sample(prior_mean_t, prior_sigma_t)
+            phi_z_t = self.z_emb(z_t)
 
-                pred_dur_mean = self.sigmoid(
-                    self.dur_decoder(torch.cat([self.act_emb(pred_act_prob), dec_t], -1)))
-                pred_dur_std = self.softplus(
-                    self.dur_decoder(torch.cat([self.act_emb(pred_act_prob), dec_t], -1)))
+            dec_t = self.relu(self.phi_z_hidden_to_dec(torch.cat([phi_z_t, hidden], -1)))
+            pred_act_prob = self.dec_to_act(dec_t)
+            pred_act = torch.argmax(self.softmax(pred_act_prob))
 
-                pred_dur_norm = torch.mean(Normal(pred_dur_mean, pred_dur_std).sample((1000,)), 0)
-                pred_dur = pred_dur_norm.item() * std + mean
+            pred_dur_mean = self.sigmoid(
+                self.dur_decoder(torch.cat([self.act_emb(pred_act_prob), dec_t], -1)))
+            pred_dur_std = self.softplus(
+                self.dur_decoder(torch.cat([self.act_emb(pred_act_prob), dec_t], -1)))
 
-                phi_act_t = self.act_emb(pred_act_prob)
-                phi_dur_t = self.dur_emb(pred_dur_norm)
-                phi_x_t = self.x_emb(torch.cat([phi_act_t, phi_dur_t], -1))
+            pred_dur_norm = torch.mean(Normal(pred_dur_mean, pred_dur_std).sample((1000,)), 0)
+            pred_dur = pred_dur_norm.item() * std + mean
 
-                hidden = self.rnn(torch.cat([phi_x_t, phi_z_t], -1), hidden)
+            phi_act_t = self.act_emb(pred_act_prob)
+            phi_dur_t = self.dur_emb(pred_dur_norm)
+            phi_x_t = self.x_emb(torch.cat([phi_act_t, phi_dur_t], -1))
 
-                if num_pred == 0:
-                    pred_durations.append(int(pred_dur) - last_obs_dur)
+            _, hidden = self.rnn(torch.cat([phi_x_t, phi_z_t], 1).unsqueeze(0), hidden)
 
-                else:
-                    if pred_acts[-1] != pred_act:
-                        pred_acts.append(pred_act.item())
-                        pred_durations.append(int(pred_dur))
+            if num_pred == 0:
+                pred_durations.append(int(pred_dur) - last_obs_dur)
 
-                    elif pred_acts[-1] == pred_act:
-                        pred_durations[-1] += int(pred_dur)
+            else:
+                if pred_acts[-1] != pred_act:
+                    pred_acts.append(pred_act.item())
+                    pred_durations.append(int(pred_dur))
 
-                total_dur -= pred_dur
-                if pred_duration_so_far >= total_dur:
-                    break
+                elif pred_acts[-1] == pred_act:
+                    pred_durations[-1] += int(pred_dur)
 
-                num_pred += 1
+            total_dur -= pred_dur
+            if pred_duration_so_far >= total_dur:
+                break
 
-            return pred_acts, pred_durations
+            num_pred += 1
 
-    def init_hidden(self, batch_size):
-        return torch.zeros(batch_size, self.h_dim)
+        return pred_acts, pred_durations
+
+    def _reparameterized_sample(self, mean, std):
+        """using std to sample"""
+        eps = torch.empty(size=std.size(), device=device, dtype=torch.float).normal_()
+        return eps.mul(std).add_(mean)
 
 
 class MultiHeadVRNN(nn.Module):

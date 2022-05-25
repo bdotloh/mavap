@@ -91,6 +91,8 @@ def split_sequence(acts, durs, obs=.2, pred=.5):
             fut_acts = acts[:, ix:]
             break
     if pred == 1:
-        return (obs_acts, obs_durs), (fut_acts, fut_durs)
+        return (obs_acts.view(1,-1).type(torch.long), torch.tensor(obs_durs, dtype=torch.float)), \
+               (fut_acts, fut_durs)
     else:
-        return (obs_acts, obs_durs), cut_future_by_pred_percent(fut_acts, fut_durs, pred)
+        return (obs_acts.view(1,-1).type(torch.long), torch.tensor(obs_durs, dtype=torch.float)), \
+               cut_future_by_pred_percent(fut_acts, fut_durs, pred)

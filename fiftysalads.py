@@ -31,7 +31,7 @@ def fiftysalads_train(h_dim, z_dim, n_z, epochs, checkpoint_path=None):
         print(f'Fold: {fold + 1} \n train instances: {len(trainset)}')
         trainloader = DataLoader(trainset, batch_size=1, collate_fn=pad_collate, shuffle=True)
 
-        model = AnticipationModel(act_dim=19, h_dim=h_dim, z_dim=z_dim, n_z=n_z)
+        model = AnticipationModel(act_dim=19, h_dim=h_dim, z_dim=z_dim, n_heads=n_z)
         optimizer = Adam(model.parameters(), lr=.0001)
 
         epoch_start = 1
@@ -141,7 +141,7 @@ def fiftysalad_eval(h_dim, z_dim, n_z, checkpoint_path=None):
 
         valloader = DataLoader(valset, batch_size=1, shuffle=False)
 
-        model = AnticipationModel(act_dim=19, h_dim=h_dim, z_dim=z_dim, n_z=n_z)
+        model = AnticipationModel(act_dim=19, h_dim=h_dim, z_dim=z_dim, n_heads=n_z)
         if checkpoint_path:
             checkpoint = torch.load(checkpoint_path)
             model.load_state_dict(checkpoint['model_state_dict'])
