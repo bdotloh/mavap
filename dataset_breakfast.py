@@ -12,7 +12,7 @@ class BreakfastseqDataset(Dataset):
     def __init__(self, root_dir, split, split_type):  # change to args
         super().__init__()
         self.act_dict = read_mapping_dict(os.path.join(root_dir, 'mapping_breakfast.txt'))
-        self.data = {'act_seqs_one_hot': [], 'act_seqs_ix': [], 'dur_seqs': [], 'seq_lens': []}
+        self.data = {'act_seqs_ix': [], 'dur_seqs': [], 'seq_lens': []}
 
         with open(os.path.join(root_dir, f'{split_type}.split{split}.bundle'), 'r') as file_ptr_0:
             video_list = file_ptr_0.read().split('\n')[:-1]
@@ -21,18 +21,16 @@ class BreakfastseqDataset(Dataset):
                 with open(os.path.join(root_dir, f'groundtruth/{video_name}'), 'r') as file_ptr_1:
                     content = file_ptr_1.read().split('\n')[:-1]
                     action_seq, duration_seq = get_label_length_seq(content)
-                    action_ix_seq = torch.tensor([self.act_dict[ix] for ix in action_seq], dtype=torch.long)
-                    action_ix_seq_one_hot = one_hot(action_ix_seq, num_classes=len(self.act_dict))
-                    self.data['act_seqs_ix'].append(action_ix_seq.unsqueeze(-1))
-                    self.data['act_seqs_one_hot'].append(action_ix_seq_one_hot)
+                    action_ix_seq = [self.act_dict[ix] for ix in action_seq]
+                    self.data['act_seqs_ix'].append(torch.tensor(action_ix_seq, dtype=torch.long).unsqueeze(-1))
                     self.data['dur_seqs'].append(torch.tensor(duration_seq).unsqueeze(-1))
                     self.data['seq_lens'].append(len(action_seq))
 
     def __len__(self):
-        return len(self.data['act_seqs_one_hot'])
+        return len(self.data['act_seqs_ix'])
 
     def __getitem__(self, i):
-        return {k: self.data[k][i] for k in ['act_seqs_one_hot', 'act_seqs_ix', 'dur_seqs', 'seq_lens']}
+        return {k: self.data[k][i] for k in ['act_seqs_ix', 'dur_seqs', 'seq_lens']}
 
     def decode_act_ix_sequence(self, action_ix_sequence):
         return [list(self.act_dict.keys())[list(self.act_dict.values()).index(act_ix)] for act_ix in action_ix_sequence]
@@ -79,36 +77,40 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     dataset = BreakfastseqDataset(args.dir, args.split, args.split_type)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, collate_fn=seq_collate_dict)
-    example_batch, mask, length = next(iter(dataloader))
-    print(example_batch['act_seqs_one_hot'].shape)
-    model = MultiHeadVRNN(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)
-    priors, posteriors, pred_acts, pred_durs = model(example_batch['act_seqs_one_hot'], example_batch['dur_seqs'])
-    cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
-    nll_gauss = torch.nn.GaussianNLLLoss(reduction='none')
-    ce_loss = 0
-    kl_loss = 0
-    nll_gauss_loss = 0
-    T = example_batch['act_seqs_ix'].size(1)
-    for t in range(T):
-        kl_loss += kld_gauss(
-            posteriors[0][:, t, :],
-            posteriors[-1][:, t, :],
-            priors[0][:, t, :],
-            priors[-1][:, t, :],
-            mask=mask[:, t, :]
-        )
-        ce_loss += cross_entropy(
-            pred_acts[:, t, :],
-            example_batch['act_seqs_ix'][:, t, :].type(torch.long).squeeze(-1)).masked_select(
-            mask[:, t, :].squeeze(-1)).sum()
-        nll_gauss_loss += nll_gauss(
-            pred_durs[0][:, t, :],
-            example_batch['dur_seqs'][:, t, :],
-            pred_durs[-1][:, t, :]).masked_select(
-            mask[:, t, :].squeeze(-1)).sum()
+    dataloader = DataLoader(dataset, batch_size=1, collate_fn=seq_collate_dict)
+    act_seq, dur_seq = next(iter(dataloader))[0]['act_seqs_ix'], next(iter(dataloader))[0]['dur_seqs']
+    model_inputs, ground_truth = split_sequence(act_seq, dur_seq)
+    print(model_inputs)
 
-    ce_loss /= args.batch_size
-    kl_loss /= args.batch_size
-    nll_gauss_loss /= args.batch_size
-    print(ce_loss, kl_loss, nll_gauss_loss)
+    # example_batch, mask, length = next(iter(dataloader))
+    # # print(example_batch['act_seqs_one_hot'].shape)
+    # model = MultiHeadVRNN(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)
+    # priors, posteriors, pred_acts, pred_durs = model(example_batch['act_seqs_one_hot'], example_batch['dur_seqs'])
+    # cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
+    # nll_gauss = torch.nn.GaussianNLLLoss(reduction='none')
+    # ce_loss = 0
+    # kl_loss = 0
+    # nll_gauss_loss = 0
+    # T = example_batch['act_seqs_ix'].size(1)
+    # for t in range(T):
+    #     kl_loss += kld_gauss(
+    #         posteriors[0][:, t, :],
+    #         posteriors[-1][:, t, :],
+    #         priors[0][:, t, :],
+    #         priors[-1][:, t, :],
+    #         mask=mask[:, t, :]
+    #     )
+    #     ce_loss += cross_entropy(
+    #         pred_acts[:, t, :],
+    #         example_batch['act_seqs_ix'][:, t, :].type(torch.long).squeeze(-1)).masked_select(
+    #         mask[:, t, :].squeeze(-1)).sum()
+    #     nll_gauss_loss += nll_gauss(
+    #         pred_durs[0][:, t, :],
+    #         example_batch['dur_seqs'][:, t, :],
+    #         pred_durs[-1][:, t, :]).masked_select(
+    #         mask[:, t, :].squeeze(-1)).sum()
+    #
+    # ce_loss /= args.batch_size
+    # kl_loss /= args.batch_size
+    # nll_gauss_loss /= args.batch_size
+    # print(ce_loss, kl_loss, nll_gauss_loss)

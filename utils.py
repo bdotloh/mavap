@@ -58,3 +58,39 @@ def kld_gauss(mean_1, std_1, mean_2, std_2, mask=None):
         kld_element = kld_element.masked_select(mask)
     return 0.5 * torch.sum(kld_element)
 
+
+def cut_future_by_pred_percent(acts, durs, pred=1):
+    total_pred_dur = round(sum(durs) * pred)
+    dur_so_far = 0
+
+    for ix in range(len(durs)):
+        dur_so_far += durs[ix]
+        if dur_so_far > total_pred_dur:
+            fut_durs = durs[:ix + 1]
+            diff = dur_so_far - total_pred_dur
+            fut_durs[-1] -= diff
+            fut_acts = acts[:, :ix + 1]
+            break
+    return (fut_acts, fut_durs)
+
+
+def split_sequence(acts, durs, obs=.2, pred=.5):
+    total_obs_dur = torch.round(torch.sum(durs) * obs).item()
+    dur_so_far = 0
+    durs_list = durs.view(-1).detach().tolist()
+    for ix in range(len(durs_list)):
+        dur_so_far += durs_list[ix]
+        if dur_so_far > total_obs_dur:
+            obs_durs = durs_list[:ix + 1]
+            fut_durs = durs_list[ix:]
+            diff = dur_so_far - total_obs_dur
+            obs_durs[-1] -= diff
+            fut_durs[0] -= obs_durs[-1]
+
+            obs_acts = acts[:, :ix + 1]
+            fut_acts = acts[:, ix:]
+            break
+    if pred == 1:
+        return (obs_acts, obs_durs), (fut_acts, fut_durs)
+    else:
+        return (obs_acts, obs_durs), cut_future_by_pred_percent(fut_acts, fut_durs, pred)
