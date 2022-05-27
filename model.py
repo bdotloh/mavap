@@ -147,7 +147,7 @@ class AnticipationModel(nn.Module):
 
         return unnorm_prob_pred_act, (pred_dur_mean, pred_dur_std), torch.mean(kld)
 
-    def generate(self, acts, durs, total_dur='dur', mean='mean_dur', std='std_dur'):
+    def forecast(self, acts, durs, total_dur='dur', mean='mean_dur', std='std_dur'):
         last_obs_dur = durs[-1].item()
 
         pred_acts = [torch.argmax(acts[:, -1, :]).item()]
@@ -194,7 +194,7 @@ class AnticipationModel(nn.Module):
             z_t = self._reparameterized_sample(prior_mean_t, prior_sigma_t)
             phi_z_t = self.z_emb(z_t)
 
-            dec_t = self.relu(self.phi_z_hidden_to_dec(torch.cat([phi_z_t, hidden], -1)))
+            dec_t = self.relu(self.phi_z_hidden_to_dec(torch.cat([phi_z_t, hidden[-1]], -1)))
             pred_act_prob = self.dec_to_act(dec_t)
             pred_act = torch.argmax(self.softmax(pred_act_prob))
 

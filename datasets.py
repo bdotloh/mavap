@@ -129,7 +129,7 @@ class BreakfastTraining(Dataset):
         super().__init__()
         # store act to index mapping in dictionary
         self.act2ix = {}
-        with open('data/breakfasts/mapping_breakfasts.txt', 'r') as file_ptr:
+        with open('data/breakfast/mapping_breakfast.txt', 'r') as file_ptr:
             ixs_acts = file_ptr.read().split('\n')[:-1]
 
         for ix_act in ixs_acts:
@@ -145,7 +145,7 @@ class BreakfastTraining(Dataset):
         self.all_files = []
         for i, file in enumerate(files):
             self.all_files.append(file)
-            with open('data/breakfasts/groundtruth/{}'.format(file), 'r') as file_ptr:
+            with open('data/breakfast/groundtruth/{}'.format(file), 'r') as file_ptr:
                 act_seq = file_ptr.read().split('\n')[:-1]
                 acts = []
                 durs = []
@@ -302,18 +302,18 @@ def pad_collate(batch):
 
 
 
-trainset,testset = get_files()
-dataset = FiftySaladsTraining(trainset)
-print(len(dataset))
-dataloader = DataLoader(dataset,batch_size=2, collate_fn=pad_collate)
-
-print('-----train-----')
-obs, tar = next(iter(dataloader))
-print(obs)
-print(tar)
-
-testset = FiftySaladsTest(testset)
-testloader = DataLoader(testset, batch_size=1)
+# trainset,testset = get_files()
+# dataset = FiftySaladsTraining(trainset)
+# print(len(dataset))
+# dataloader = DataLoader(dataset,batch_size=2, collate_fn=pad_collate)
+#
+# print('-----train-----')
+# obs, tar = next(iter(dataloader))
+# print(obs)
+# print(tar)
+#
+# testset = FiftySaladsTest(testset)
+# testloader = DataLoader(testset, batch_size=1)
 
 # print('-----test-----')
 # acts, durs = next(iter(testloader))
@@ -329,3 +329,9 @@ testloader = DataLoader(testset, batch_size=1)
 # total_dur = sum(fut_durs)
 # pred_acts, pred_durs = model.generate(obs_acts, obs_dur, total_dur,testset.dur_mean,testset.dur_std)
 # print(pred_acts,pred_durs)
+
+with open('data/breakfast/train.split{}.bundle'.format(1), 'r') as file_ptr:
+    train_files = file_ptr.read().split('\n')[:-1]
+
+trainset = BreakfastTraining(train_files)
+print(trainset[20])
