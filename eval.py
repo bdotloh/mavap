@@ -7,7 +7,7 @@ from model import MAVAP
 def eval(dataset, split, obs_per, pred_per, h_dim, z_dim, n_layers, n_heads, checkpoint_path=None):
     if dataset == 'breakfast':
         file_dir = 'data/breakfast'
-        testset = BreakfastseqDataset(file_dir, split, 'test')
+        testset = BreakfastDataset(file_dir, split, 'test')
         act_dim = 48
 
     model = MAVAP(act_dim=act_dim, h_dim=h_dim, z_dim=z_dim, n_layers=n_layers,

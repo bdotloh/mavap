@@ -10,7 +10,7 @@ from sklearn.metrics import balanced_accuracy_score
 from model import MultiHeadVRNN, MAVAP
 
 
-class BreakfastseqDataset(Dataset):
+class BreakfastDataset(Dataset):
     def __init__(self, root_dir, split, split_type):  # change to args
         super().__init__()
         self.split_type = split_type
@@ -133,7 +133,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     model = MAVAP(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)
-    dataset = BreakfastseqDataset(args.dir, args.split, 'train')
+    dataset = BreakfastDataset(args.dir, args.split, 'train')
     dataloader = DataLoader(dataset, batch_size=8, collate_fn=seq_collate_dict_train, shuffle=False)
     batch, mask, length = next(iter(dataloader))
     obs_acts = batch['obs_act_seqs']
@@ -158,7 +158,7 @@ if __name__ == '__main__':
         kl_loss += kl_t
     print(kl_loss)
     ########### test data and evaluation #############
-    # dataset = BreakfastseqDataset(args.dir, args.split, 'test')
+    # dataset = BreakfastDataset(args.dir, args.split, 'test')
     # dataloader = DataLoader(dataset, batch_size=1, collate_fn=seq_collate_dict)
     #
     # for data in dataloader:

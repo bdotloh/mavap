@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 def train(dataset, batch_size, split, h_dim, z_dim, n_layers, n_heads, epochs, checkpoint_path=None):
     if dataset == 'breakfast':
         file_dir = 'data/breakfast'
-        trainset = BreakfastseqDataset(file_dir, split, 'train')
+        trainset = BreakfastDataset(file_dir, split, 'train')
         act_dim = 48
 
     model = MAVAP(act_dim=act_dim, h_dim=h_dim, z_dim=z_dim, n_layers=n_layers,
