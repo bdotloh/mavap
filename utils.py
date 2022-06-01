@@ -56,6 +56,7 @@ def kld_gauss(mean_1, std_1, mean_2, std_2, mask=None):
 
     if mask is not None:
         kld_element = kld_element.masked_select(mask)
+
     return 0.5 * torch.sum(kld_element)
 
 

@@ -7,7 +7,7 @@ from torch.nn.functional import one_hot
 
 from sklearn.metrics import balanced_accuracy_score
 
-from model import MultiHeadVRNN, AnticipationModel
+from model import MultiHeadVRNN, MAVAP
 
 
 class BreakfastseqDataset(Dataset):
@@ -132,19 +132,31 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    model = AnticipationModel(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)
+    model = MAVAP(act_dim=args.act_dim, h_dim=args.h_dim, z_dim=args.z_dim, n_layers=args.n_layers, n_heads=args.n_heads)
     dataset = BreakfastseqDataset(args.dir, args.split, 'train')
-    dataloader = DataLoader(dataset, batch_size=4, collate_fn=seq_collate_dict_train, shuffle=False)
-    batch = next(iter(dataloader))[0]
+    dataloader = DataLoader(dataset, batch_size=8, collate_fn=seq_collate_dict_train, shuffle=False)
+    batch, mask, length = next(iter(dataloader))
     obs_acts = batch['obs_act_seqs']
     obs_durs = batch['obs_dur_seqs']
-    pred_act = batch['pred_act']
-    pred_dur = batch['pred_dur']
-    print(obs_acts)
-    print(obs_durs)
-    print(pred_act)
-    print(pred_dur)
+    groundtruth_act = batch['pred_act']
+    groundtruth_dur = batch['pred_dur']
 
+    pred_act, pred_dur, priors, posteriors = model(obs_acts, obs_durs)
+    cross_entropy = torch.nn.CrossEntropyLoss()
+    gaussian_nll = torch.nn.GaussianNLLLoss()
+
+    kl_loss = 0
+    T = len(posteriors[0])
+    for t in range(T):
+        kl_t = kld_gauss(
+            posteriors[0][t],
+            posteriors[-1][t],
+            priors[0][t],
+            priors[-1][t],
+            mask=mask[:, t, :]
+        )
+        kl_loss += kl_t
+    print(kl_loss)
     ########### test data and evaluation #############
     # dataset = BreakfastseqDataset(args.dir, args.split, 'test')
     # dataloader = DataLoader(dataset, batch_size=1, collate_fn=seq_collate_dict)
