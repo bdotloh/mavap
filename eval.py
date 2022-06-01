@@ -1,6 +1,6 @@
 import torch
 
-from dataset_breakfast import *
+from datasets import *
 from model import MAVAP
 
 
@@ -9,6 +9,11 @@ def eval(dataset, split, obs_per, pred_per, h_dim, z_dim, n_layers, n_heads, che
         file_dir = 'data/breakfast'
         testset = BreakfastDataset(file_dir, split, 'test')
         act_dim = 48
+
+    if dataset == '50salad':
+        file_dir = 'data/50salad'
+        testset = FiftySaladDataset(file_dir, split, 'test')
+        act_dim = 19
 
     model = MAVAP(act_dim=act_dim, h_dim=h_dim, z_dim=z_dim, n_layers=n_layers,
                   n_heads=n_heads)
@@ -23,7 +28,7 @@ def eval(dataset, split, obs_per, pred_per, h_dim, z_dim, n_layers, n_heads, che
     all_tar = []
     all_pred = []
     for data in dataloader:
-        act_seq, dur_seq = data[0]['act_seqs_ix'], data[0]['dur_seqs']
+        act_seq, dur_seq = data[0]['act_ix_seqs'], data[0]['dur_seqs']
         (obs_acts, obs_durs), (tar_future_acts, tar_future_durs) = split_sequence(
             act_seq,
             dur_seq,

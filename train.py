@@ -1,4 +1,4 @@
-from dataset_breakfast import *
+from datasets import *
 from model import MAVAP
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -9,6 +9,11 @@ def train(dataset, batch_size, split, h_dim, z_dim, n_layers, n_heads, epochs, c
         file_dir = 'data/breakfast'
         trainset = BreakfastDataset(file_dir, split, 'train')
         act_dim = 48
+
+    if dataset == '50salad':
+        file_dir = 'data/50salad'
+        trainset = FiftySaladDataset(file_dir, split, 'train')
+        act_dim = 19
 
     model = MAVAP(act_dim=act_dim, h_dim=h_dim, z_dim=z_dim, n_layers=n_layers,
                   n_heads=n_heads)
@@ -37,17 +42,21 @@ def train(dataset, batch_size, split, h_dim, z_dim, n_layers, n_heads, epochs, c
             batch, mask, length = data
             obs_acts = batch['obs_act_seqs']
             obs_durs = batch['obs_dur_seqs']
+            obs_durs_norm = obs_durs.apply_(lambda x: (x - trainset.dur_mean) / trainset.dur_std)
+
             tar_act = batch['pred_act']
             tar_dur = batch['pred_dur']
 
-            pred_act, pred_dur, priors, posteriors = model(obs_acts, obs_durs)
+            tar_durs_norm = (tar_dur-trainset.dur_mean) / trainset.dur_std
+
+            pred_act, pred_dur, priors, posteriors = model(obs_acts, obs_durs_norm)
 
             pred_dur_mean, pred_dur_std = pred_dur
             prior_means, prior_stds = priors
             posterior_means, posterior_stds = posteriors
 
             act_loss = cross_entropy(pred_act, tar_act)
-            dur_loss = gaussian_nll(pred_dur_mean, tar_dur, pred_dur_std)
+            dur_loss = gaussian_nll(pred_dur_mean, tar_durs_norm, pred_dur_std)
             kl_loss = 0
             T = len(posteriors[0])
             for t in range(T):
@@ -74,6 +83,7 @@ def train(dataset, batch_size, split, h_dim, z_dim, n_layers, n_heads, epochs, c
         epoch_loss_dur = running_dur_loss / (i + 1)
 
         print(epoch_loss_dur + epoch_loss_act + epoch_loss_kl)
+
 
 if __name__ == '__main__':
     import argparse

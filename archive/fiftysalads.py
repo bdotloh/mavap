@@ -18,7 +18,7 @@ n_z = 12
 h_dim = 64
 z_dim = 64
 
-files = sorted([file for file in os.listdir('data/50salads/groundtruth') if file.endswith('.txt')])
+files = sorted([file for file in os.listdir('../data/50salad/groundtruth') if file.endswith('.txt')])
 kfold = KFold(5, shuffle=True, random_state=42)
 
 
