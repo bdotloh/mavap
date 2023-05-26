@@ -1,5 +1,5 @@
 # Long-term Action Forecasting Using Multi-headed Attention-based Variational Recurrent Neural Networks (MAVAP)
-Pytorch implementation of MAVAP
+Pytorch implementation of MAVAP, a novel probablistic neural network archicture for action forecasting from videos
 
 ### Citation
 
