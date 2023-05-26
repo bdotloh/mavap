@@ -1,9 +1,5 @@
 # Long-term Action Forecasting Using Multi-headed Attention-based Variational Recurrent Neural Networks (MAVAP)
-Pytorch implementation of MAVAP, a probablistic neural network archicture for action forecasting from videos
-
-### Citation
-
-Siyuan Brandon Loh, Debaditya Roy, Basura Fernando; Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops, 2022, pp. 2419-2427
+Pytorch implementation of MAVAP, a probablistic neural network archicture for action forecasting from videos. This piece of work was presented at the 3rd Workshop and Competition on Affective Behavior Analysis in-the-wild (ABAW), which was held during the Computer Vision and Pattern Recognition conference in 2022. 
 
 ```stex
 @inproceedings{loh2022long,
